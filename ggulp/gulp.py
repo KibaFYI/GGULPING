@@ -124,7 +124,8 @@ class Gulp:
         self.portions: dict[str, tuple[int | None, bool]] = {}
         self.burst = False
         self.notify = notify.Discord(job.webhook, job.name)
-        self.threads = job.threads or os.cpu_count() or 4
+        # the pod's own share of the CPU (cgroup quota / affinity), not every core on the host machine
+        self.threads = job.threads or hardware._cpu_count() or 4
         self.show = Show(job.name, 0, self.log, live=False)  # replaced by the real one in run()
 
     # ── space ──────────────────────────────────────────────────────────────────────
