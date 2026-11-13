@@ -18,12 +18,22 @@ import sys
 import tempfile
 from pathlib import Path
 
+from rich.markup import escape
+
 from forge import ui
 
 from . import __version__, hub, llama, menu, talk
 from .config import Job
 from .gulp import Gulp, GulpError, Report
 from .menu import gb
+
+
+def say(text: str) -> None:
+    ui.console.print(text, markup=False, highlight=False)
+
+
+def shout(text: str) -> None:
+    ui.console.print(f"[bold {ui.ERR}]! {escape(text)}[/]")
 
 
 def banner() -> None:
@@ -45,11 +55,11 @@ def print_report(r: Report) -> None:
     rows += [(q, "-", "failed") for q in r.failed]
     ui.table(f"{r.name} · {talk.ALL_GULPED} · {r.minutes:.0f} min", ["quant", "size", ""], rows)
     if r.repo_url:
-        ui.ok(r.repo_url)
+        say(r.repo_url)
     if r.readme:
-        ui.info(r.readme)
+        say(r.readme)
     if r.kept_in:
-        ui.info(f"still on this pod: {r.kept_in}")
+        say(f"still on this pod: {r.kept_in}")
 
 
 def cmd_setup(args) -> int:
@@ -70,10 +80,10 @@ def cmd_setup(args) -> int:
 def cmd_run(args) -> int:
     job = Job.from_env()
     if not job.model:
-        ui.err("set GGULP_MODEL (a Hugging Face model, a model folder or a .gguf)")
+        shout("set GGULP_MODEL (a Hugging Face model, a model folder or a .gguf)")
         return 2
-    with ui.console.status(talk.SAVORING):
-        tasted = hub.taste(job.model, job.hf_token)
+    say(talk.SAVORING)
+    tasted = hub.taste(job.model, job.hf_token)
     job.name = job.name or tasted.short_name
     if job.hf_token and not job.namespace:
         from forge import upload
@@ -93,7 +103,7 @@ def cmd_menu(args) -> int:
         if q in menu.SNACK:
             where += " + snack"
         rows.append((q, f"{menu.BPW.get(q, 0):g}", "yes" if q in menu.NEEDS_IMATRIX else "", where,
-                     "✔" if q in have or q == "BF16" else "✖"))
+                     "yes" if q in have or q == "BF16" else "no"))
     ui.table(f"llama.cpp {llama.version()}", ["quant", "≈ bits/weight", "needs imatrix", "menu", "here"], rows)
     return 0
 
@@ -107,7 +117,7 @@ def _latest_log() -> Path | None:
 def cmd_logs(args) -> int:
     log = _latest_log()
     if not log:
-        ui.warn("no meals yet")
+        say("nothing eaten yet")
         return 1
     os.execvp("tail", ["tail", "-n", "200"] + (["-F"] if args.follow else []) + [str(log)])
     return 0
@@ -115,7 +125,7 @@ def cmd_logs(args) -> int:
 
 def cmd_attach(args) -> int:
     if subprocess.call(["tmux", "has-session", "-t", "ggulp"], stderr=subprocess.DEVNULL) != 0:
-        ui.warn("nothing is running (no tmux session 'ggulp')")
+        say("nothing is running (no tmux session 'ggulp')")
         return 1
     os.execvp("tmux", ["tmux", "attach", "-t", "ggulp"])
     return 0
@@ -127,10 +137,10 @@ def cmd_selftest(args) -> int:
     quants = ["Q8_0", "Q4_K_M", "IQ4_XS", "Q2_K"] + (["IQ2_XXS"] if args.imatrix else [])
     job = Job(model=args.model, name="selftest", namespace=None, mode="smart", menu="custom", custom=quants,
               imatrix="on" if args.imatrix else "off", home=home, reserve_gb=0, split_gb=0.1, imatrix_chunks=8)
-    ui.step(f"selftest · {args.model} · {' '.join(quants)}")
+    say(f"selftest: {args.model}  {' '.join(quants)}")
     failures = []
     try:
-        report = Gulp(job).run()
+        report = Gulp(job, live=False).run()
         print_report(report)
         for q in quants:
             files = llama.pieces(job.workdir / "out", f"selftest-{q}")
@@ -152,9 +162,9 @@ def cmd_selftest(args) -> int:
             shutil.rmtree(home, ignore_errors=True)
     if failures:
         for f in failures:
-            ui.err(f)
+            shout(f)
         return 1
-    ui.ok("selftest passed - the whole meal works")
+    say("selftest passed: the whole meal works")
     return 0
 
 
@@ -187,8 +197,8 @@ def main(argv: list[str] | None = None) -> int:
     except ui.CmdExit:
         return 0
     except (GulpError, ValueError) as exc:
-        ui.err(f"{talk.SICK}: {exc}")
+        shout(f"{talk.SICK}: {exc}")
         return 1
     except KeyboardInterrupt:
-        ui.warn("stopped - run it again and I carry on where I left off")
+        say("stopped. run it again with the same name and I carry on")
         return 130

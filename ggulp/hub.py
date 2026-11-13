@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from forge import fetch, ui
+from forge import fetch
 
 from .menu import gb
 
@@ -177,7 +177,7 @@ def remote_files(hf, repo_id: str) -> set[str]:
         return set()
 
 
-def push(hf, repo_id: str, files: list[Path], message: str, tries: int = 4) -> None:
+def push(hf, repo_id: str, files: list[Path], message: str, tries: int = 4, on_retry=None) -> None:
     """One commit with these files (named as they are on disk). Retries; the Hub resumes big files."""
     from huggingface_hub import CommitOperationAdd
 
@@ -190,7 +190,8 @@ def push(hf, repo_id: str, files: list[Path], message: str, tries: int = 4) -> N
             if attempt == tries:
                 raise
             wait = 20 * attempt
-            ui.warn(f"upload hiccup ({type(exc).__name__}: {str(exc)[:160]}) - trying again in {wait}s")
+            if on_retry:
+                on_retry(f"upload hiccup ({type(exc).__name__}: {str(exc)[:120]}), trying again in {wait}s")
             time.sleep(wait)
 
 

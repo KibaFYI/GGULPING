@@ -14,8 +14,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Callable
 
-from forge import ui
-
 LLAMA = Path(os.environ.get("GGULP_LLAMA_DIR", "/opt/llama.cpp"))
 
 
@@ -91,50 +89,41 @@ def tail(log_path: Path, lines: int = 25) -> str:
     return "\n".join([ln for ln in clean if ln.strip()][-lines:])
 
 
-class Meter:
-    """A purple progress bar fed by a tool's output."""
+Progress = Callable[[int, int], None]  # (done, total)
+
+
+class Tracker:
+    """Turns a tool's output into (done, total) for the progress bar."""
 
     _TENSOR = re.compile(r"\[\s*(\d+)\s*/\s*(\d+)\s*\]")      # llama-quantize: [ 12/ 291] blk.0...
     _PCT = re.compile(r"(\d{1,3})%\|")                          # converter (tqdm): Writing:  45%|
     _CHUNK = re.compile(r"\[(\d+)\]\s*-?\d")                    # llama-imatrix: [12]5.4321,
+    _CHUNKS = re.compile(r"computing over (\d+) chunks")         # llama-imatrix: how many there will be
 
-    def __init__(self, description: str, kind: str, total: int | None = None):
-        from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
-
-        self.kind = kind
-        cols = [SpinnerColumn(), TextColumn("{task.description}"), BarColumn(bar_width=36)]
-        cols.append(MofNCompleteColumn() if kind in ("tensors", "chunks") else TextColumn("{task.percentage:>3.0f}%"))
-        cols.append(TimeElapsedColumn())
-        self.progress = Progress(*cols, console=ui.console, transient=False)
-        self.task = self.progress.add_task(description, total=total or 100)
+    def __init__(self, kind: str, callback: Progress | None, total: int = 100):
+        self.kind, self.callback, self.total = kind, callback, total
         self._buf = ""
 
-    def __enter__(self) -> "Meter":
-        self.progress.start()
-        return self
-
-    def __exit__(self, *exc) -> None:
-        self.progress.stop()
-
     def feed(self, text: str) -> None:
+        if not self.callback:
+            return
         self._buf = (self._buf + text)[-4000:]
         if self.kind == "tensors":
             hits = self._TENSOR.findall(self._buf)
             if hits:
                 done, total = (int(x) for x in hits[-1])
-                self.progress.update(self.task, completed=done, total=total)
+                self.callback(done, total)
         elif self.kind == "chunks":
+            m = self._CHUNKS.search(self._buf)
+            if m:
+                self.total = int(m.group(1))
             hits = self._CHUNK.findall(self._buf)
             if hits:
-                self.progress.update(self.task, completed=max(int(h) for h in hits))
+                self.callback(max(int(h) for h in hits), self.total)
         else:
             hits = self._PCT.findall(self._buf)
             if hits:
-                self.progress.update(self.task, completed=min(100, int(hits[-1])))
-
-    def finish(self) -> None:
-        t = self.progress.tasks[0]
-        self.progress.update(self.task, completed=t.total)
+                self.callback(min(100, int(hits[-1])), 100)
 
 
 # ── the tools ─────────────────────────────────────────────────────────────────────
@@ -176,43 +165,35 @@ def size_arg(gb: float) -> str:
     return f"{int(gb)}G" if gb >= 1 and float(gb).is_integer() else f"{max(1, int(gb * 1000))}M"
 
 
-def convert(src: Path, outfile: Path, split_gb: float, log: Path, mistral: bool = False) -> int:
+def convert(src: Path, outfile: Path, split_gb: float, log: Path, mistral: bool = False,
+            progress: Progress | None = None) -> int:
     cmd = convert_cmd() + [src, "--outtype", "bf16", "--outfile", outfile, "--split-max-size", size_arg(split_gb)]
     if mistral:
         cmd.append("--mistral-format")
-    with Meter("unhinging my jaw", "percent") as m:
-        rc = run(cmd, log, m.feed)
-        if rc == 0:
-            m.finish()
-    return rc
+    return run(cmd, log, Tracker("percent", progress).feed)
 
 
-def quantize(base: Path, out: Path, q: str, imatrix: Path | None, threads: int, log: Path) -> int:
+def quantize(base: Path, out: Path, q: str, imatrix: Path | None, threads: int, log: Path,
+             progress: Progress | None = None) -> int:
     cmd = quantize_cmd() + (["--imatrix", imatrix] if imatrix else []) + [base, out, q]
     if threads:
         cmd.append(str(threads))
-    with Meter(f"chewing {q}", "tensors") as m:
-        rc = run(cmd, log, m.feed)
-        if rc == 0:
-            m.finish()
-    return rc
+    return run(cmd, log, Tracker("tensors", progress).feed)
 
 
-def imatrix(model: Path, calib: Path, out: Path, ngl: int, chunks: int, threads: int, gpu: bool, log: Path) -> int:
-    cmd = imatrix_cmd(gpu) + ["-m", model, "-f", calib, "-o", out, "--output-format", "gguf",
-                              "--chunks", str(chunks), "-ngl", str(ngl)]
+def imatrix(model: Path, calib: Path, out: Path, ngl: int, chunks: int, threads: int, gpu: bool, log: Path,
+            progress: Progress | None = None) -> int:
+    """chunks=0 runs the whole calibration file."""
+    cmd = imatrix_cmd(gpu) + ["-m", model, "-f", calib, "-o", out, "--output-format", "gguf", "-ngl", str(ngl)]
+    if chunks:
+        cmd += ["--chunks", str(chunks)]
     if threads:
         cmd += ["-t", str(threads)]
-    with Meter("tasting", "chunks", total=chunks) as m:
-        rc = run(cmd, log, m.feed)
-        if rc == 0:
-            m.finish()
-    return rc
+    return run(cmd, log, Tracker("chunks", progress, total=chunks or 100).feed)
 
 
 def split(path: Path, prefix: Path, split_gb: float, log: Path) -> int:
-    with ui.console.status(f"cutting {path.name} into ≤{size_arg(split_gb)}B pieces for the Hub…"):
-        return run(split_cmd() + ["--split", "--split-max-size", size_arg(split_gb), path, prefix], log)
+    return run(split_cmd() + ["--split", "--split-max-size", size_arg(split_gb), path, prefix], log)
 
 
 def pieces(folder: Path, stem: str) -> list[Path]:
