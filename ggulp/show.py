@@ -1,23 +1,22 @@
-r"""The run screen: the wolfgon, one word per step, and one skull with every quant eaten so far.
+r'''The run screen: the wolfgon, one word per step, and one skull with every quant eaten so far.
 
     look       Q4_K_M  4.9 GB
     savor      fits, 61 GB free
     gulp
-    digesting  ████████████░░░░░░░░░░░░░░░░   43%  Q4_K_M
+    digesting  ████████████████████████████  100%  Q4_K_M
     burrp
 
-      _____
-     /     \
-    | () () |   Q4_K_M
-     \  ^  /    done
-      |||||
-
-     .-.
-    (o o) - BF16 | Q8_0 | Q6_K | Q5_1 | Q5_K_M | Q5_K_S | Q5_0 | Q4_1
-     |=|    Q4_K_M
+          .-"""""-.
+        .'         '.     Q4_K_M done
+       /  .-.   .-.  \
+      |  (   ) (   )  |  - BF16 | Q8_0 | Q6_K | Q5_1 | Q5_K_M | Q5_K_S
+      |   '-'   '-'   |    Q5_0 | Q4_1 | Q4_K_M
+       \      ^      /
+        '. |_|_|_| .'
+          '-------'
 
 In a terminal it redraws in place. Without one (docker logs) it prints one line per step.
-Everything also goes into the meal's log."""
+Everything also goes into the meal's log.'''
 
 from __future__ import annotations
 
@@ -32,8 +31,18 @@ from forge import art, ui
 
 from . import talk
 
-BIG_SKULL = ["  _____  ", " /     \\ ", "| () () |", " \\  ^  / ", "  |||||  "]
-SMALL_SKULL = [" .-. ", "(o o)", " |=| "]
+SKULL = [
+    '      .-"""""-.      ',
+    "    .'         '.    ",
+    "   /  .-.   .-.  \\   ",
+    "  |  (   ) (   )  |  ",
+    "  |   '-'   '-'   |  ",
+    "   \\      ^      /   ",
+    "    '. |_|_|_| .'    ",
+    "      '-------'      ",
+]
+SKULL_W = len(SKULL[0])
+SAYS_ROW, LIST_ROW = 1, 3  # "Q4_K_M done" next to the forehead, the eaten list next to the eyes
 BAR = 28      # width of the progress bar
 WORD = 10     # width of the step word column
 
@@ -111,7 +120,7 @@ class Show:
         self.pile.append(quant)
         self.done += 1
         lines = [f"{talk.BURP}"] + [
-            row + ("   " + quant if i == 2 else "   " + talk.DONE if i == 3 else "") for i, row in enumerate(BIG_SKULL)
+            row.rstrip() + (f"   {quant} {talk.DONE}" if i == SAYS_ROW else "") for i, row in enumerate(SKULL)
         ]
         self._out(f"{talk.BURP:<{WORD}} {quant} {talk.DONE}", lines)
 
@@ -162,27 +171,19 @@ class Show:
             line.append(f"  {int(100 * done / total):>3}%  {label}", style=ui.PURPLE)
             body.append(line)
 
-        if self.skull:
-            body.append(Text(""))
-            for i, row in enumerate(BIG_SKULL):
-                line = Text(pad + "  ", no_wrap=True, overflow="crop")
-                line.append(row, style=f"bold {ui.HOT}")
-                if i == 2:
-                    line.append(f"   {self.skull}", style=f"bold {ui.HOT}")
-                elif i == 3:
-                    line.append(f"   {talk.DONE}", style=ui.PURPLE)
-                body.append(line)
-
         notes = [Text(pad + n, style=ui.DIM, no_wrap=True, overflow="crop") for n in self.notes]
-        if self.pile:  # one skull, every quant eaten so far next to it: BF16 | Q8_0 | Q6_K | ...
+        if self.pile or self.skull:  # the one skull: says what just went down, lists everything eaten so far
             body.append(Text(""))
-            listed = pipe_lines(self.pile, max(20, block - len(SMALL_SKULL[0]) - 6))
-            for r in range(max(len(SMALL_SKULL), len(listed) + 1)):
-                line = Text(pad + "  ", no_wrap=True, overflow="crop")
-                line.append(SMALL_SKULL[r] if r < len(SMALL_SKULL) else " " * len(SMALL_SKULL[0]), style=f"bold {ui.HOT}")
-                if 1 <= r <= len(listed):
-                    line.append(" - " if r == 1 else "   ", style=f"bold {ui.HOT}")
-                    line.append(listed[r - 1], style=ui.PURPLE)
+            listed = pipe_lines(self.pile, max(20, block - SKULL_W - 6))
+            for r in range(max(len(SKULL), LIST_ROW + len(listed))):
+                line = Text(pad, no_wrap=True, overflow="crop")
+                line.append_text(skull_row(r))
+                if r == SAYS_ROW and self.skull:
+                    line.append(f"  {self.skull} {talk.DONE}", style=f"bold {ui.HOT}")
+                k = r - LIST_ROW
+                if 0 <= k < len(listed):
+                    line.append(" - " if k == 0 else "   ", style=f"bold {ui.HOT}")
+                    line.append(listed[k], style=ui.PURPLE)
                 body.append(line)
         if notes:
             body.append(Text(""))
@@ -194,6 +195,21 @@ class Show:
             top = [art.render_line(line, max(0, (w - art.width()) // 2)) for line in art.lines()]
             return Group(*top, Text(""), *body)
         return Group(*body)
+
+
+def skull_row(r: int) -> Text:
+    """One row of the skull: bone pale, eye sockets and nose hot, teeth purple."""
+    row = SKULL[r] if r < len(SKULL) else " " * SKULL_W
+    text = Text(no_wrap=True)
+    for c, ch in enumerate(row):
+        if 2 <= r <= 4 and (5 <= c <= 9 or 11 <= c <= 15) or (r == 5 and c == 10):
+            style = f"bold {ui.HOT}"
+        elif r == 6 and 7 <= c <= 13:
+            style = ui.PURPLE
+        else:
+            style = f"bold {ui.SOFT}"
+        text.append(ch, style=style)
+    return text
 
 
 def pipe_lines(items: list[str], width: int) -> list[str]:
