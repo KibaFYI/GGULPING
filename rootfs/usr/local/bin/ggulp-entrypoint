@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# ── GGULPING entrypoint ─────────────────────────────────────────────────────────
+#  1. wolfgon banner            3. GGULP_MODEL set -> `ggulp run` in tmux session "ggulp",
+#  2. ssh (PUBLIC_KEY / ROOT_PASSWORD), env handed to ssh shells      log mirrored to stdout
+#                               4. else: interactive shell (TTY) or stay alive for ssh
+set -uo pipefail
+. /etc/forge/purple.sh
+
+GGULP_HOME="${GGULP_HOME:-/workspace/ggulp}"
+export GGULP_HOME
+say()  { printf '%s[ggulp]%s %s%s\n' "$(printf '\033[1;38;2;124;77;255m')" "$FORGE_SGR" "$*" "$(printf '\033[0m')"; }
+warn() { printf '%s[ggulp] %s%s\n' "$(printf '\033[1;38;2;255;92;203m')" "$*" "$(printf '\033[0m')"; }
+
+mkdir -p "$GGULP_HOME" "${HF_HOME:-/workspace/.cache/huggingface}" /etc/forge
+
+ggulp banner 2>/dev/null || say "GGULPING"
+
+# ── hand env vars to ssh / tmux shells (they don't inherit the container env) ──
+{
+    while IFS='=' read -r name _; do
+        case "$name" in
+            GGULP_*|FORGE_*|HF_*|HUGGING_FACE_*|RUNPOD_*|VAST_*|CUDA_VISIBLE_DEVICES|NVIDIA_*|PATH|LD_LIBRARY_PATH|PYTHONPATH|TRITON_*)
+                printf 'export %s=%q\n' "$name" "${!name}" ;;
+        esac
+    done < <(env)
+} > /etc/forge/env.sh
+chmod 600 /etc/forge/env.sh
+
+# ── ssh ───────────────────────────────────────────────────────────────────────────
+setup_ssh() {
+    mkdir -p /root/.ssh /run/sshd
+    chmod 700 /root/.ssh
+    touch /root/.ssh/authorized_keys
+    for key in "${PUBLIC_KEY:-}" "${SSH_PUBLIC_KEY:-}"; do
+        [ -n "$key" ] && printf '%s\n' "$key" >> /root/.ssh/authorized_keys
+    done
+    sort -u /root/.ssh/authorized_keys -o /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys
+    rm -f /etc/ssh/sshd_config.d/10-forge-password.conf
+    if [ -n "${ROOT_PASSWORD:-}" ]; then
+        echo "root:${ROOT_PASSWORD}" | chpasswd
+        printf 'PermitRootLogin yes\nPasswordAuthentication yes\n' > /etc/ssh/sshd_config.d/10-forge-password.conf
+    fi
+    if [ -s /root/.ssh/authorized_keys ] || [ -n "${ROOT_PASSWORD:-}" ] || [ "${GGULP_SSH:-auto}" = "1" ]; then
+        ssh-keygen -A >/dev/null 2>&1
+        if /usr/sbin/sshd -E "$GGULP_HOME/sshd.log"; then
+            say "sshd listening on :22"
+        else
+            warn "sshd failed to start (see $GGULP_HOME/sshd.log)"
+        fi
+    fi
+}
+[ "${GGULP_SSH:-auto}" != "0" ] && setup_ssh
+
+# ── explicit command wins ─────────────────────────────────────────────────────────
+if [ $# -gt 0 ]; then
+    exec "$@"
+fi
+
+if [ -n "${GGULP_MODEL:-}" ] && [ "${GGULP_AUTORUN:-1}" != "0" ]; then
+    say "GGULP_MODEL found -> eating ${GGULP_MODEL} in tmux session 'ggulp'"
+    say "watch it: ssh in and run 'ggulp attach' (or 'ggulp logs -f')"
+    tmux new-session -d -s ggulp -x 220 -y 50 \
+        "ggulp run; echo; echo '── ggulp run finished. this tmux window stays open ──'; exec zsh -l"
+    if [ -t 0 ] && [ -t 1 ]; then
+        exec tmux attach -t ggulp
+    fi
+    (   # mirror the meal's log to container stdout (docker logs / RunPod log viewer)
+        for _ in $(seq 1 900); do
+            log=$(ls -t "$GGULP_HOME"/*/logs/gulp-*.log 2>/dev/null | head -1)
+            [ -n "$log" ] && break
+            sleep 1
+        done
+        [ -n "${log:-}" ] && exec tail -n +1 -F "$log" 2>/dev/null
+    ) &
+    exec sleep infinity
+fi
+
+if [ -t 0 ] && [ -t 1 ]; then
+    exec zsh -l   # the login shell pops up the setup screen
+fi
+
+say "hungry and waiting - ssh in and the setup screen pops up (or set GGULP_MODEL to start by itself)"
+exec sleep infinity

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# GGULPING launcher (the ggulp package sits next to axolotl-forge's forge package)
+export PYTHONPATH="/opt/ggulp:/opt/forge${PYTHONPATH:+:$PYTHONPATH}"
+exec /opt/forge/venv/bin/python -m ggulp "$@"
