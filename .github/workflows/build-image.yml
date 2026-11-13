@@ -97,9 +97,13 @@ jobs:
             BASE_IMAGE=${{ steps.names.outputs.base }}
             LLAMA_CPP_REF=${{ steps.names.outputs.ref }}
             BUILD_JOBS=4
-          # every stage is cached (mode=max), so llama.cpp only rebuilds when its version changes
-          cache-from: type=registry,ref=${{ steps.names.outputs.image }}:buildcache
-          cache-to: type=registry,ref=${{ steps.names.outputs.image }}:buildcache,mode=max
+          # every stage is cached (mode=max), so llama.cpp only rebuilds when its version changes.
+          # The cache lives in its own package (ggulping-buildcache) so the ggulping page only
+          # shows real images. The second cache-from is the old spot; delete that tag any time.
+          cache-from: |
+            type=registry,ref=${{ steps.names.outputs.image }}-buildcache:main
+            type=registry,ref=${{ steps.names.outputs.image }}:buildcache
+          cache-to: type=registry,ref=${{ steps.names.outputs.image }}-buildcache:main,mode=max
 
       - name: Selftest (tiny model, CPU only, nothing uploaded)
         run: |
