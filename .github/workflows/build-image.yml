@@ -18,9 +18,10 @@ permissions:
   contents: read
   packages: write
 
+# a new push waits for the running build (so its compiled llama.cpp gets cached) instead of cancelling it
 concurrency:
   group: build-image-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
