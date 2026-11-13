@@ -1,6 +1,7 @@
 # Builds the GGULPING image on GitHub's free runners and pushes it to
-#   ghcr.io/<your-github-user>/ggulping:{latest, llama.cpp-<release>}
-# then runs `ggulp selftest` inside it (tiny model, CPU only, nothing uploaded).
+#   ghcr.io/<your-github-user>/ggulping:<llama.cpp release>-cu<cuda>   e.g. :b12370-cu130
+# (never :latest - RunPod advises against it), then runs `ggulp selftest` inside it
+# (tiny model, CPU only, nothing uploaded).
 name: build image
 
 on:
@@ -56,20 +57,22 @@ jobs:
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           image="ghcr.io/${owner}/ggulping"
           pinned=$(grep -oP '^ARG LLAMA_CPP_REF=\K\S+' Dockerfile)
+          base=$(grep -oP '^ARG BASE_IMAGE=\K\S+' Dockerfile)
+          cuda=$(grep -oP '^ARG CUDA_VERSION=\K\S+' Dockerfile)
+          cu="cu$(echo "$cuda" | awk -F. '{print $1 $2}')"
           case "${WANT}" in
             "") ref="$pinned" ;;
             newest) ref=$(git ls-remote --tags --refs https://github.com/ggml-org/llama.cpp | awk -F/ '{print $3}' | grep -E '^b[0-9]+$' | sort -V | tail -1) ;;
             *) ref="$WANT" ;;
           esac
-          echo "llama.cpp ${ref}"
+          tag="${ref}-${cu}"
+          echo "llama.cpp ${ref} on ${base} -> ${image}:${tag}"
           {
             echo "image=${image}"
-            echo "base=ghcr.io/${owner}/axolotl-forge:latest"
+            echo "base=${base}"
             echo "ref=${ref}"
-            echo "tags<<EOF"
-            echo "${image}:latest"
-            echo "${image}:llama.cpp-${ref}"
-            echo "EOF"
+            echo "tag=${tag}"
+            echo "tags=${image}:${tag}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Log in to GitHub Container Registry
@@ -100,10 +103,10 @@ jobs:
 
       - name: Selftest (tiny model, CPU only, nothing uploaded)
         run: |
-          docker pull "${{ steps.names.outputs.image }}:latest"
-          docker run --rm -e COLUMNS=120 "${{ steps.names.outputs.image }}:latest" ggulp selftest --imatrix
+          docker pull "${{ steps.names.outputs.tags }}"
+          docker run --rm -e COLUMNS=120 "${{ steps.names.outputs.tags }}" ggulp selftest --imatrix
 
       - name: Done
         run: |
-          echo "### pushed (llama.cpp ${{ steps.names.outputs.ref }})" >> "$GITHUB_STEP_SUMMARY"
-          echo '${{ steps.names.outputs.tags }}' | sed 's/^/- `/; s/$/`/' >> "$GITHUB_STEP_SUMMARY"
+          echo "### pushed \`${{ steps.names.outputs.tags }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Use that in your RunPod template (llama.cpp ${{ steps.names.outputs.ref }}, selftest passed)." >> "$GITHUB_STEP_SUMMARY"

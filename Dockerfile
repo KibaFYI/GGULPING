@@ -7,7 +7,7 @@
 #                      a CUDA build of llama-imatrix (tastes the model on the GPUs)
 #   + llama.cpp's converter in its own venv (it pins its own transformers / torch)
 # ───────────────────────────────────────────────────────────────────────────────
-ARG BASE_IMAGE=ghcr.io/kibafyi/axolotl-forge:latest
+ARG BASE_IMAGE=ghcr.io/kibafyi/axolotl-forge:0.21.1-cu130
 ARG CUDA_VERSION=13.0.3
 
 # ── llama.cpp, built on its own so a new axolotl-forge image doesn't rebuild it ──

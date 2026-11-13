@@ -120,6 +120,8 @@ def taste(link: str, token: str | None) -> Taste:
         if "NotFound" in name or "404" in str(exc):
             raise ValueError(f"{src.ref} not found (typo? private models need a token with access)") from exc
         raise ValueError(f"could not look at {src.ref}: {exc}") from exc
+    if getattr(info, "gated", False):  # gated models: the token has to have accepted the terms
+        _check_access(api, src.ref, token)
     files = {s.rfilename: (s.size or 0) for s in (info.siblings or [])}
     has_st = any(f.endswith(".safetensors") for f in files)
     t.skip = list(ALWAYS_SKIP) + (["*.bin", "*.pt", "*.pth", "consolidated*"] if has_st else [])
@@ -143,6 +145,25 @@ def taste(link: str, token: str | None) -> Taste:
     return t
 
 
+def gated_message(repo: str, token: str | None) -> str:
+    if not token:
+        return f"{repo} is gated - I need a Hugging Face token that has access to it"
+    return f"{repo} is gated - accept its terms at https://huggingface.co/{repo} with the account of your token"
+
+
+def _check_access(api, repo: str, token: str | None) -> None:
+    if not token:
+        raise ValueError(gated_message(repo, token))
+    try:
+        api.auth_check(repo, token=token)
+    except AttributeError:  # older huggingface_hub: the download will tell
+        return
+    except Exception as exc:  # noqa: BLE001
+        if "Gated" in type(exc).__name__ or any(code in str(exc) for code in ("401", "403")):
+            raise ValueError(gated_message(repo, token)) from exc
+        raise ValueError(f"could not check access to {repo}: {exc}") from exc
+
+
 def _skipped(name: str, patterns: list[str]) -> bool:
     from fnmatch import fnmatch
 
@@ -153,7 +174,12 @@ def download(t: Taste, dest: Path, token: str | None) -> Path:
     from huggingface_hub import snapshot_download
 
     dest.mkdir(parents=True, exist_ok=True)
-    snapshot_download(t.ref, revision=t.revision, local_dir=dest, token=token, ignore_patterns=t.skip)
+    try:
+        snapshot_download(t.ref, revision=t.revision, local_dir=dest, token=token, ignore_patterns=t.skip)
+    except Exception as exc:  # noqa: BLE001
+        if "Gated" in type(exc).__name__ or any(code in str(exc) for code in ("401 Client", "403 Client")):
+            raise ValueError(gated_message(t.ref, token)) from exc
+        raise
     return dest
 
 

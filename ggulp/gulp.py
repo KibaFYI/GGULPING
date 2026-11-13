@@ -154,9 +154,14 @@ class Gulp:
             disable_progress_bars()  # the run screen draws its own
         except ImportError:
             pass
+        if j.hf_token:  # every Hugging Face call (and the converter) uses it: gated models need it
+            os.environ["HF_TOKEN"] = j.hf_token
         try:
             if not self.tasted:
-                self.tasted = hub.taste(j.model, j.hf_token)
+                try:
+                    self.tasted = hub.taste(j.model, j.hf_token)
+                except ValueError as exc:
+                    raise GulpError(str(exc)) from exc
             todo = menu.resolve(j.menu, j.custom, self.tasted.is_moe, set(llama.available_types()) or None)
             if not todo:
                 raise GulpError("the menu is empty - pick at least one quant")
@@ -277,6 +282,8 @@ class Gulp:
         watcher.start()
         try:
             hub.download(t, src, self.job.hf_token)
+        except ValueError as exc:
+            raise GulpError(str(exc)) from exc
         finally:
             stop.set()
             watcher.join()
