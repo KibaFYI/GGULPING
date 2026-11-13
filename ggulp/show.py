@@ -1,4 +1,4 @@
-r"""The run screen: the wolfgon, one word per step, and a pile of skulls (one per quant).
+r"""The run screen: the wolfgon, one word per step, and one skull with every quant eaten so far.
 
     look       Q4_K_M  4.9 GB
     savor      fits, 61 GB free
@@ -12,10 +12,9 @@ r"""The run screen: the wolfgon, one word per step, and a pile of skulls (one pe
      \  ^  /    done
       |||||
 
-     .-.       .-.       .-.
-    (o o)     (o o)     (o o)
-     |=|       |=|       |=|
-     BF16      Q8_0      Q6_K
+     .-.
+    (o o) - BF16 | Q8_0 | Q6_K | Q5_1 | Q5_K_M | Q5_K_S | Q5_0 | Q4_1
+     |=|    Q4_K_M
 
 In a terminal it redraws in place. Without one (docker logs) it prints one line per step.
 Everything also goes into the meal's log."""
@@ -35,7 +34,6 @@ from . import talk
 
 BIG_SKULL = ["  _____  ", " /     \\ ", "| () () |", " \\  ^  / ", "  |||||  "]
 SMALL_SKULL = [" .-. ", "(o o)", " |=| "]
-COL = 10      # width of one skull in the pile
 BAR = 28      # width of the progress bar
 WORD = 10     # width of the step word column
 
@@ -176,26 +174,38 @@ class Show:
                 body.append(line)
 
         notes = [Text(pad + n, style=ui.DIM, no_wrap=True, overflow="crop") for n in self.notes]
-        per_row = max(1, block // COL)
-        rows = [self.pile[i:i + per_row] for i in range(0, len(self.pile), per_row)]
-        used = len(body) + len(notes) + 2
-        art_h = art.height() + 1
-        show_art = w >= art.width() + 2 and h >= used + 4 * min(len(rows), 1) + art_h
-        room_for_rows = max(0, (h - used - (art_h if show_art else 0)) // 4)
-        if rows:
+        if self.pile:  # one skull, every quant eaten so far next to it: BF16 | Q8_0 | Q6_K | ...
             body.append(Text(""))
-            for row in rows[-room_for_rows:] if room_for_rows else []:
-                for r in range(len(SMALL_SKULL) + 1):
-                    line = Text(pad, no_wrap=True, overflow="crop")
-                    for q in row:
-                        cell = SMALL_SKULL[r] if r < len(SMALL_SKULL) else q
-                        line.append(cell.center(COL)[:COL], style=f"bold {ui.HOT}" if r < len(SMALL_SKULL) else ui.PURPLE)
-                    body.append(line)
+            listed = pipe_lines(self.pile, max(20, block - len(SMALL_SKULL[0]) - 6))
+            for r in range(max(len(SMALL_SKULL), len(listed) + 1)):
+                line = Text(pad + "  ", no_wrap=True, overflow="crop")
+                line.append(SMALL_SKULL[r] if r < len(SMALL_SKULL) else " " * len(SMALL_SKULL[0]), style=f"bold {ui.HOT}")
+                if 1 <= r <= len(listed):
+                    line.append(" - " if r == 1 else "   ", style=f"bold {ui.HOT}")
+                    line.append(listed[r - 1], style=ui.PURPLE)
+                body.append(line)
         if notes:
             body.append(Text(""))
             body += notes
 
+        art_h = art.height() + 1
+        show_art = w >= art.width() + 2 and h >= len(body) + art_h
         if show_art:
             top = [art.render_line(line, max(0, (w - art.width()) // 2)) for line in art.lines()]
             return Group(*top, Text(""), *body)
         return Group(*body)
+
+
+def pipe_lines(items: list[str], width: int) -> list[str]:
+    """['BF16', 'Q8_0', ...] -> ['BF16 | Q8_0 | ...', 'Q4_K_M | ...'], each line at most `width` wide."""
+    lines, cur = [], ""
+    for item in items:
+        nxt = f"{cur} | {item}" if cur else item
+        if cur and len(nxt) > width:
+            lines.append(cur)
+            cur = item
+        else:
+            cur = nxt
+    if cur:
+        lines.append(cur)
+    return lines
