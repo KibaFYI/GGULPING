@@ -6,7 +6,7 @@ Give it a model. It makes every GGUF and puts them on Hugging Face.
 
 ## How to use it
 
-1. Make a RunPod template with the image `ghcr.io/kibafyi/ggulping:b12370-cu130`, a volume at `/workspace`, and TCP port `22`.
+1. Make a RunPod template with the image `ghcr.io/kibafyi/ggulping:b12373-cu130`, a volume at `/workspace`, and TCP port `22`.
 2. Start a pod and connect with SSH.
 3. Answer the questions.
 4. Wait. Your GGUFs show up at `huggingface.co/<you>/<name>-GGUF`.

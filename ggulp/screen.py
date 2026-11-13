@@ -1,6 +1,6 @@
 """The setup screen: the wolfgon in the middle, as few questions as possible, then the meal.
 
-HF token -> model -> name -> where it goes (only asked if you have orgs) -> smart or dump.
+HF token -> model -> name -> where it goes (you, an org, or typed) -> smart or dump.
 Then one summary, Enter starts, and when it's done it's back to the start. cmd-exit leaves.
 Everything else (which quants, imatrix, Discord, disk cap) comes from GGULP_* settings."""
 
@@ -30,6 +30,8 @@ from .menu import gb
 
 DISMISSED = Path(os.environ.get("GGULP_SETUP_DISMISSED", "/tmp/ggulp-setup-dismissed"))
 SKIP = "__skip__"
+OTHER = "__other__"
+NS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,90}$")
 SAVED = ("model", "name", "namespace", "mode", "private")
 
@@ -244,16 +246,36 @@ def step_name(screen: Screen, a: Answers, step: str) -> None:
 
 
 def step_place(screen: Screen, a: Answers, step: str) -> None:
+    """Always asked: your account, any of your orgs, or type one in."""
     if not a.hf_token:
         a.namespace = SKIP
         return
-    if not a.hf_orgs:  # nothing to choose
-        a.namespace = a.hf_user
-        return
-    opts = [(a.hf_user, escape(a.hf_user or ""))] + [(o, escape(o)) for o in a.hf_orgs]
+    opts = [(a.hf_user, f"{escape(a.hf_user or '')}  [{ui.DIM}](you)[/]")]
+    opts += [(o, f"{escape(o)}  [{ui.DIM}](org)[/]") for o in a.hf_orgs]
+    if a.namespace and a.namespace not in (SKIP, OTHER) and a.namespace not in [v for v, _ in opts]:
+        opts.append((a.namespace, f"{escape(a.namespace)}  [{ui.DIM}](typed last time)[/]"))
+    opts.append((OTHER, f"[{ui.DIM}]type another name or org[/]"))
     values = [v for v, _ in opts]
     default = values.index(a.namespace) if a.namespace in values else 0
-    a.namespace = screen.pick(step, talk.ASK_PLACE, [f"<here>/{escape(a.name or '')}-GGUF"], opts, default)
+    intro = [f"It goes up as [bold {ui.HOT}]<here>/{escape(a.name or '')}-GGUF[/]."]
+    choice = screen.pick(step, talk.ASK_PLACE, intro, opts, default)
+    if choice != OTHER:
+        a.namespace = choice
+        return
+    error = None
+    while True:
+        value = screen.ask(step, talk.ASK_PLACE, [
+            "Type the account or org name.",
+            f"[{ui.DIM}]your token needs write access to it[/]",
+        ], error).strip().strip("/")
+        if not value:
+            error = "type a name (or cmd-exit)"
+            continue
+        if not NS_RE.match(value):
+            error = "letters, numbers, . _ - only"
+            continue
+        a.namespace = value
+        return
 
 
 def step_mode(screen: Screen, a: Answers, step: str) -> None:

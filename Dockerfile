@@ -14,7 +14,7 @@ ARG CUDA_VERSION=13.0.3
 FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu24.04 AS llama
 
 # pinned llama.cpp release (the GitHub build can swap in the newest one)
-ARG LLAMA_CPP_REF=b12370
+ARG LLAMA_CPP_REF=b12373
 # sm_80 code also runs on 8.6 / 8.9 (A40, 3090, 4090, L40S), sm_100 on B300, sm_120 on DGX Spark
 ARG LLAMA_CUDA_ARCHS="80-real;90-real;100-real;120-real"
 ARG BUILD_JOBS=4
