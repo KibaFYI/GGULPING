@@ -82,6 +82,46 @@ class State:
         self.save()
 
 
+def tokenizer_shim(src: Path, shim: Path) -> Path:
+    """llama.cpp's converter runs transformers 4.x (its own pin). transformers 5 saves
+    `extra_special_tokens` in tokenizer_config.json as a list, which 4.x can't load
+    ("'list' object has no attribute 'keys'"). If that's the case, hand the converter a folder
+    of links to the model's files with a rewritten tokenizer_config.json: the list is folded into
+    `additional_special_tokens` (what 4.x calls the same thing). The model folder is never touched."""
+    cfg_path = src / "tokenizer_config.json"
+    try:
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return src
+    extra = cfg.get("extra_special_tokens")
+    if not isinstance(extra, list):
+        return src
+    shutil.rmtree(shim, ignore_errors=True)
+    shim.mkdir(parents=True)
+    for item in src.iterdir():
+        if item.name == "tokenizer_config.json":
+            continue
+        target = shim / item.name
+        try:
+            target.symlink_to(item.resolve(), target_is_directory=item.is_dir())
+        except OSError:  # no symlinks allowed here: hard link (same disk) or copy
+            if item.is_dir():
+                shutil.copytree(item, target)
+            else:
+                try:
+                    os.link(item, target)
+                except OSError:
+                    shutil.copy2(item, target)
+    merged = list(cfg.get("additional_special_tokens") or [])
+    for token in extra:
+        if token not in merged:
+            merged.append(token)
+    cfg["additional_special_tokens"] = merged
+    cfg["extra_special_tokens"] = {}
+    (shim / "tokenizer_config.json").write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+    return shim
+
+
 def dir_bytes(folder: Path) -> int:
     total = 0
     for root, _dirs, files in os.walk(folder):
@@ -256,9 +296,13 @@ class Gulp:
             shutil.copyfile(src / "config.json", self.work / "config.json")
 
         show.step(talk.BASE, "BF16 GGUF")
-        rc = llama.convert(src, self.out / f"{stem}.gguf", j.split_gb, self.log, mistral=t.mistral_format,
+        feed = tokenizer_shim(src, self.work / "src-shim")
+        if feed != src:
+            self._log("tokenizer_config.json was saved by transformers 5: the converter gets a 4.x-readable copy")
+        rc = llama.convert(feed, self.out / f"{stem}.gguf", j.split_gb, self.log, mistral=t.mistral_format,
                            progress=lambda d, n: show.progress(talk.BASE, d, n, "BF16"))
         show.end_bar()
+        shutil.rmtree(self.work / "src-shim", ignore_errors=True)
         if rc != 0:
             raise GulpError(f"turning it into a GGUF failed (exit {rc}):\n{llama.tail(self.log)}")
         self.base = llama.pieces(self.out, stem)
