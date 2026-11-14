@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 
 from rich.console import Group
 from rich.live import Live
@@ -63,6 +64,10 @@ class Show:
         self.notes: list[str] = []
         self._live: Live | None = None
         self._printed_quarter = -1
+        self._bar_word: str | None = None
+        self._bar_t0 = 0.0
+        self._bar_done = 0
+        self.eta = ""
 
     # ── start / stop ───────────────────────────────────────────────────────────────
 
@@ -101,15 +106,22 @@ class Show:
 
     def progress(self, word: str, done: int, total: int, label: str = "") -> None:
         total = max(total, 1)
-        self.bar = (word, min(done, total), total, label)
-        quarter = int(4 * min(done, total) / total)
+        done = min(done, total)
+        now = time.monotonic()
+        if word != self._bar_word or done < self._bar_done:  # a new bar: start its clock
+            self._bar_word, self._bar_t0 = word, now
+        self._bar_done = done
+        self.eta = time_left(now - self._bar_t0, done, total)
+        self.bar = (word, done, total, label)
+        quarter = int(4 * done / total)
         if quarter != self._printed_quarter:  # the log / docker logs get 0 25 50 75 100 %
             self._printed_quarter = quarter
-            self._out(f"{word:<{WORD}} {25 * quarter:>3}%  {label}".rstrip())
+            self._out(f"{word:<{WORD}} {25 * quarter:>3}%  {label}  {self.eta}".rstrip())
 
     def end_bar(self) -> None:
         self.bar = None
         self._printed_quarter = -1
+        self._bar_word, self._bar_done, self.eta = None, 0, ""
 
     def burp(self, quant: str) -> None:
         if self.steps and self.steps[-1][0] == talk.GULP:  # keep the finished bar on screen
@@ -169,6 +181,8 @@ class Show:
             line.append("█" * filled, style=ui.HOT)
             line.append("░" * (BAR - filled), style=ui.DEEP)
             line.append(f"  {int(100 * done / total):>3}%  {label}", style=ui.PURPLE)
+            if self.eta:
+                line.append(f"  {self.eta}", style=ui.DIM)
             body.append(line)
 
         notes = [Text(pad + n, style=ui.DIM, no_wrap=True, overflow="crop") for n in self.notes]
@@ -195,6 +209,19 @@ class Show:
             top = [art.render_line(line, max(0, (w - art.width()) // 2)) for line in art.lines()]
             return Group(*top, Text(""), *body)
         return Group(*body)
+
+
+def time_left(elapsed: float, done: int, total: int) -> str:
+    """'about 12 min left' from how fast the bar has moved so far."""
+    if done <= 0 or done >= total or elapsed < 3:
+        return ""
+    seconds = elapsed * (total - done) / done
+    if seconds < 60:
+        return "under a minute left"
+    minutes = round(seconds / 60)
+    if minutes < 60:
+        return f"about {minutes} min left"
+    return f"about {minutes // 60} h {minutes % 60} min left"
 
 
 def skull_row(r: int) -> Text:

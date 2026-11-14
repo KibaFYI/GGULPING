@@ -58,7 +58,7 @@ class Job:
     split_gb: float = 45.0              # bigger files are split (the Hub takes files up to 50 GB)
     reserve_gb: float = 2.0             # always leave this much free
     imatrix_data: str | None = None     # calibration text: path or https:// url (default: bartowski's v5)
-    imatrix_chunks: int = 0             # 0 = the whole calibration file
+    imatrix_chunks: int = 200           # chunks of 512 tokens to taste; 0 = the whole calibration file
     upload_imatrix: bool = True
     threads: int = 0                    # 0 = all cores
 
@@ -93,7 +93,8 @@ class Job:
         j.split_gb = _float("GGULP_SPLIT_GB") or 45.0
         j.reserve_gb = _float("GGULP_RESERVE_GB") if _float("GGULP_RESERVE_GB") is not None else 2.0
         j.imatrix_data = _env("GGULP_IMATRIX_DATA")
-        j.imatrix_chunks = int(_float("GGULP_IMATRIX_CHUNKS") or 0)
+        chunks = _float("GGULP_IMATRIX_CHUNKS")
+        j.imatrix_chunks = 200 if chunks is None else int(chunks)  # 0 = all of it
         j.upload_imatrix = _bool("GGULP_UPLOAD_IMATRIX", True)
         j.threads = int(_float("GGULP_THREADS") or 0)
         return j
